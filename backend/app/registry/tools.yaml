@@ -1,0 +1,30 @@
+# ============================================================
+# 工具注册配置文件
+# 修改后无需重启服务（需启用热加载）或者直接restart容器
+# ============================================================
+
+tools:
+  - name: get_time
+    display_name: 获取系统时间
+    description: 获取当前系统时间，包含日期时间、毫秒时间戳和时区信息
+    script: get_time.sh
+    category: 系统信息
+    params: []
+    timeout: 10
+    enabled: true
+    tags:
+      - 时间
+      - 系统
+
+  - name: sys_check
+    display_name: 系统资源巡检
+    description: 系统资源巡检，检查 CPU、内存、磁盘、网络等资源使用情况
+    script: sys_check.sh
+    category: 资源巡检
+    params: []
+    timeout: 30
+    enabled: true
+    tags:
+      - 资源
+      - 监控
+      - 巡检
