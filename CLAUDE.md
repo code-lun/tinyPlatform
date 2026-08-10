@@ -6,7 +6,7 @@
 
 ```bash
 # 1. 启动后端
-cd /opt/tinyPlatform/backend && python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 &
+cd /opt/Tiny-Platform/backend && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 &
 
 # 2. 验证后端
 curl http://127.0.0.1:8000/health
