@@ -11,6 +11,7 @@ import json
 import os
 import sys
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 import httpx
 from mcp.server.lowlevel import Server
@@ -29,6 +30,11 @@ BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://127.0.0.1:8000")
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "30.0"))
 API_TOKEN = os.getenv("API_TOKEN", "")
 MCP_TRANSPORT = os.getenv("MCP_TRANSPORT", "stdio")  # "stdio" | "http"
+LOG_LEVEL = os.getenv("LOG_LEVEL", "info")
+
+# 日志等级数值
+_LOG_LEVELS = {"debug": 10, "info": 20, "warning": 30, "error": 40}
+_LOG_THRESHOLD = _LOG_LEVELS.get(LOG_LEVEL.lower().strip(), 20)
 
 
 def _auth_headers() -> dict:
@@ -38,9 +44,13 @@ def _auth_headers() -> dict:
     return {}
 
 
-# ========== 辅助：向 stderr 输出日志（避免污染 stdio JSONRPC 通道） ==========
-def log(msg: str):
-    print(msg, file=sys.stderr, flush=True)
+# ========== 日志辅助（输出到 stderr，避免污染 stdio JSONRPC 通道） ==========
+def log(level: str, tag: str, msg: str):
+    """统一日志输出，带时间戳和等级"""
+    if _LOG_LEVELS.get(level, 20) < _LOG_THRESHOLD:
+        return
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] [{level:<7s}] [{tag}] {msg}", file=sys.stderr, flush=True)
 
 
 # ========== MCP 服务器实例 ==========
@@ -59,7 +69,7 @@ async def fetch_tools() -> list[Tool]:
             resp.raise_for_status()
             data = resp.json()
         except Exception as e:
-            log(f"[MCP] 获取工具列表失败: {e}")
+            log("error", "MCP", f"获取工具列表失败: {e}")
             return []
 
     tools = []
@@ -97,7 +107,7 @@ async def fetch_tools() -> list[Tool]:
             )
         )
 
-    log(f"[MCP] 已加载 {len(tools)} 个工具")
+    log("info", "MCP", f"已加载 {len(tools)} 个工具")
     return tools
 
 
@@ -173,7 +183,7 @@ server.add_request_handler("tools/call", CallToolRequestParams, handle_call_tool
 # ========== stdio 传输模式（本地开发） ==========
 async def run_stdio():
     """使用 stdio 传输启动 MCP 服务器"""
-    log(f"[MCP] stdio 模式启动，后端地址: {BACKEND_API_URL}")
+    log("info", "MCP", f"stdio 模式启动，后端地址: {BACKEND_API_URL}")
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,
@@ -226,7 +236,7 @@ async def run_http():
                     write_stream,
                     server.create_initialization_options(),
                 )
-                log(f"[MCP] HTTP 模式启动，后端地址: {BACKEND_API_URL}")
+                log("info", "MCP", f"HTTP 模式启动，后端地址: {BACKEND_API_URL}")
                 yield
                 # 关闭时取消后台任务
                 tg.cancel_scope.cancel()

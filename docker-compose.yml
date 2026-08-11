@@ -38,12 +38,13 @@ services:
       - MCP_TRANSPORT=http
       - MCP_HTTP_PORT=8080
       - REQUEST_TIMEOUT=30
+      - LOG_LEVEL=${LOG_LEVEL:-info}
     depends_on:
       backend:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      test: ["CMD", "python3", "-c", "import os, urllib.request; token = os.environ.get('API_TOKEN', 'ops-token-2024'); req = urllib.request.Request('http://127.0.0.1:8080/health', headers={'Authorization': f'Bearer {token}'}); urllib.request.urlopen(req)"]
       interval: 30s
       timeout: 5s
       retries: 3

@@ -8,6 +8,7 @@ import time
 import os
 from typing import Dict, Any
 from pathlib import Path
+from app.utils.logger import logger
 
 
 class ScriptExecutor:
@@ -176,4 +177,4 @@ class ScriptExecutor:
     
     def _log_execution(self, script_name: str, status: str, code: int, elapsed: float):
         """记录执行日志"""
-        print(f"[EXEC] 脚本: {script_name} | 状态: {status} | 码: {code} | 耗时: {elapsed:.2f}ms")
+        logger.info("EXEC", f"脚本: {script_name} | 状态: {status} | 码: {code} | 耗时: {elapsed:.2f}ms")

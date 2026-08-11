@@ -3,9 +3,9 @@ Token 验证依赖
 所有 /api/* 路由强制执行 Bearer Token 验证
 """
 import os
-import sys
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from app.utils.logger import logger
 
 # HTTPBearer 自动从 Authorization header 提取 Bearer token
 _bearer = HTTPBearer(auto_error=True)
@@ -30,18 +30,14 @@ async def verify_token(
 
     if not expected:
         # 未配置 token，拒绝所有请求（安全优先）
-        print("[AUTH] API_TOKEN 未配置，拒绝请求", file=sys.stderr, flush=True)
+        logger.error("AUTH", "API_TOKEN 未配置，拒绝请求")
         raise HTTPException(
             status_code=500,
             detail="服务端未配置 API_TOKEN，请联系管理员",
         )
 
     if credentials.credentials != expected:
-        print(
-            f"[AUTH] token 验证失败 path={request.url.path}",
-            file=sys.stderr,
-            flush=True,
-        )
+        logger.warning("AUTH", f"token 验证失败 path={request.url.path}")
         raise HTTPException(
             status_code=401,
             detail="Token 验证失败，请检查 Authorization header",

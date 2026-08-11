@@ -96,6 +96,14 @@ Docker 部署：Claude Code ──(HTTP/MCP)──▶ mcp:8080 ──(HTTP)─�
 
 ## 关键技术细节
 
+### 全局日志系统
+- `backend/app/utils/logger.py` — 全局单例 `Logger` 类，统一输出到 stderr（兼容 MCP stdio）
+- 日志等级：`debug | info | warning | error`，由 `LOG_LEVEL` 环境变量控制（默认 `info`）
+- 输出格式：`[YYYY-MM-DD HH:MM:SS] [LEVEL   ] [TAG] message`
+- 终端自动检测 TTY 以决定是否启用彩色输出
+- 用法：`from app.utils.logger import logger` → `logger.info("TAG", "message")`
+- 运行时切换等级：`logger.set_level("debug")`
+
 ### Token 认证
 - `backend/.env` 中配置 `API_TOKEN=ops-token-2024`，所有 `/api/*` 请求必须携带 `Authorization: Bearer <token>` header
 - `/health` 无需认证

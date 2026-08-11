@@ -5,6 +5,7 @@
 import yaml
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+from app.utils.logger import logger
 
 
 class ToolRegistry:
@@ -46,14 +47,14 @@ class ToolRegistry:
             if self._validate_tool(tool):
                 self._tools[tool["name"]] = tool
 
-        print(f"[REGISTRY] 已从 {self._config_path.name} 加载 {len(self._tools)} 个工具")
+        logger.info("REGISTRY", f"已从 {self._config_path.name} 加载 {len(self._tools)} 个工具")
 
     def _validate_tool(self, tool: Dict[str, Any]) -> bool:
         """验证工具定义完整性并设置默认值"""
         required = ["name", "script", "category"]
         for field in required:
             if field not in tool or not tool[field]:
-                print(f"[REGISTRY] 警告：工具缺少必需字段 '{field}'，已跳过")
+                logger.warning("REGISTRY", f"工具缺少必需字段 '{field}'，已跳过")
                 return False
 
         tool.setdefault("display_name", tool["name"])

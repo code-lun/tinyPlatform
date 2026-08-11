@@ -2,6 +2,7 @@
 FastAPI 应用入口
 注册路由、配置中间件
 """
+import os
 import signal
 import sys
 from contextlib import asynccontextmanager
@@ -12,6 +13,7 @@ load_dotenv()  # 加载 backend/.env 环境变量（必须在其他 import 之�
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers import tools
+from app.utils.logger import logger
 
 
 # ========== 生命周期管理 ==========
@@ -21,7 +23,7 @@ async def lifespan(app: FastAPI):
     # 启动
     yield
     # 关闭
-    print("[SERVER] 正在关闭服务，释放资源...", file=sys.stderr, flush=True)
+    logger.info("SERVER", "正在关闭服务，释放资源...")
 
 
 # 创建 FastAPI 应用实例
@@ -72,7 +74,7 @@ if __name__ == "__main__":
         global shutdown_flag
         if not shutdown_flag:
             shutdown_flag = True
-            print("\n[SERVER] 收到中断信号，正在优雅退出...", file=sys.stderr, flush=True)
+            logger.info("SERVER", "收到中断信号，正在优雅退出...")
             if server is not None:
                 server.should_exit = True
 
@@ -84,7 +86,7 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=8000,
         reload=False,
-        log_level="info",
+        log_level=os.getenv("LOG_LEVEL", "info"),
     )
     server = uvicorn.Server(config)
 
@@ -93,4 +95,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         pass
     finally:
-        print("[SERVER] 服务已停止，端口已释放", file=sys.stderr, flush=True)
+        logger.info("SERVER", "服务已停止，端口已释放")

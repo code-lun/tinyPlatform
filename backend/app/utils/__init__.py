@@ -1,1 +1,2 @@
-# 空文件，标记为 Python 包
+# 工具模块
+from app.utils.logger import logger  # noqa: F401 — 全局日志单例
