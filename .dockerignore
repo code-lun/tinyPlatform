@@ -1,0 +1,39 @@
+# ============================================================
+# Docker 构建忽略文件
+# ============================================================
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+eggs/
+.eggs/
+*.egg
+
+# 环境变量（通过 docker-compose / docker run 注入）
+.env
+*.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# Git
+.git/
+.gitignore
+
+# Claude
+.claude/
+
+# 文档
+*.md
+!requirements.txt
+
+# 前端（未实现）
+frontend/
+
+# 临时文件
+*.log
+*.tmp
+.DS_Store

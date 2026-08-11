@@ -1,68 +1,70 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # tinyPlatform — 运维工具平台
 
 基于 FastAPI + MCP 的运维工具平台，Shell 脚本 → API → MCP 协议 → 大模型调用，全链路打通。
 
 ## 快速启动
 
+### 本地开发
+
 ```bash
-# 1. 启动后端
-cd /opt/Tiny-Platform/backend && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+# 方式一（推荐，含优雅退出）：python -m app.main，Ctrl+C 自动释放端口
+cd /opt/Tiny-Platform/backend && python3 -m app.main &
 
-# 2. 验证后端
+# 方式二（CLI）：uvicorn，前台运行时 Ctrl+C 可退出
+cd /opt/Tiny-Platform/backend && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+# 注：& 后台运行 + Ctrl+C 不会终止进程，需 kill 或 fg 后 Ctrl+C
+
+# 验证后端（health 无需 token，API 需要 token）
 curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:8000/api/tools | python3 -m json.tool
+curl -H "Authorization: Bearer ops-token-2024" http://127.0.0.1:8000/api/tools | python3 -m json.tool
 
-# 3. 测试 MCP（需先启动后端）
-cd /opt/tinyPlatform && python3 mcp/test_client.py
+# 测试 MCP 全链路（需先启动后端）
+python3 mcp/test_client.py
 ```
 
-## 项目结构
+### Docker 部署
 
-```
-tinyPlatform/
-├── scripts/                  # ① Shell 脚本（统一 JSON 输出格式）
-│   ├── get_time.sh           #   获取系统时间
-│   └── sys_check.sh          #   系统资源巡检（CPU/内存/磁盘）
-│
-├── backend/                  # ② FastAPI 后端
-│   └── app/
-│       ├── main.py           #   应用入口，CORS，路由注册
-│       ├── routers/tools.py  #   /api/tools, /api/tools/{name} (GET/POST)
-│       ├── models/tool_models.py  # Pydantic 请求/响应模型
-│       ├── registry/         #   工具注册中心
-│       │   ├── tools.yaml    #   工具定义（名称、脚本、参数、超时）
-│       │   ├── registry.py   #   ToolRegistry 类（加载、查询、热重载）
-│       │   └── tools.py      #   函数式封装接口
-│       └── utils/executor.py #   ScriptExecutor（subprocess 封装）
-│
-├── mcp/                      # ③ MCP 服务器（供 Claude Code 调用）
-│   ├── server.py             #   MCP 2.0 协议实现，stdio 传输
-│   ├── test_client.py        #   测试客户端
-│   └── requirements.txt      #   mcp>=1.0.0, httpx>=0.27.0
-│
-├── frontend/                 # ④ 前端（文件框架已建，内容为空）
-│   ├── index.html            #   ⬜ 待实现
-│   ├── css/style.css         #   ⬜ 待实现
-│   ├── js/app.js             #   ⬜ 待实现
-│   └── nginx.conf            #   ⬜ 待实现
-│
-├── .claude/settings.json     # Claude Code MCP 配置
-├── docker-compose.yml        # ⬜ 待编写
-├── skills.md                 # 完整设计文档
-└── README.md                 # 项目介绍
+```bash
+# 构建并启动所有服务
+docker compose up -d
+
+# 查看日志
+docker compose logs -f
+
+# 验证
+curl http://127.0.0.1:8000/health
+curl -H "Authorization: Bearer ops-token-2024" http://127.0.0.1:8000/api/tools
+curl http://127.0.0.1:8080/health   # MCP 健康检查
+
+# 停止
+docker compose down
 ```
 
-## 当前状态
+## 架构与调用链路
 
-| 组件 | 状态 | 说明 |
-|------|------|------|
-| 脚本层 | ✅ 完成 | get_time.sh, sys_check.sh，统一 JSON 输出 |
-| 后端 API | ✅ 完成 | 全部端点可用，curl 测试通过 |
-| 工具注册 | ✅ 完成 | YAML 驱动，支持热重载，/api/tools?category= 过滤 |
-| MCP 服务 | ✅ 完成 | MCP SDK 2.0，测试客户端验证全链路 |
-| Claude Code 集成 | ✅ 已配置 | .claude/settings.json 注册了 ops-tools |
-| 前端页面 | ⬜ 未开始 | 目录和空文件已建 |
-| Docker 化 | ⬜ 未开始 | docker-compose.yml 为空 |
+```
+本地开发：  Claude Code ──(stdio/MCP)──▶ mcp/server.py ──(HTTP)──▶ FastAPI 后端 ──(subprocess)──▶ Shell 脚本
+Docker 部署：Claude Code ──(HTTP/MCP)──▶ mcp:8080 ──(HTTP)──▶ backend:8000 ──(subprocess)──▶ Shell 脚本
+```
+
+| 层 | 目录 | 职责 |
+|---|---|---|
+| 脚本层 | `scripts/` | Shell 脚本，统一 JSON 输出，通过环境变量 `TOOL_PARAM_{KEY}` 接收参数 |
+| API 层 | `backend/` | FastAPI，注册中心驱动工具发现，用 subprocess 执行脚本 |
+| MCP 层 | `mcp/` | MCP SDK 2.0，支持 stdio（本地）和 Streamable HTTP（Docker）双传输模式 |
+| 前端 | `frontend/` | 纯静态页面（未实现），Nginx 托管 |
+| 容器化 | `Dockerfile*`, `docker-compose.yml` | Docker Compose 一键部署，健康检查，卷挂载 |
+
+关键文件：
+- `backend/app/registry/__init__.py` — 全局 `tool_registry` 实例，所有路由通过它查询/执行工具
+- `backend/app/registry/tools.yaml` — 工具定义（名称、脚本、分类、参数、超时），修改后支持热重载
+- `backend/app/utils/executor.py` — `ScriptExecutor` 封装 subprocess，以 `scripts/` 为基准目录
+- `mcp/server.py` — MCP 服务端，`add_request_handler()` 注册模式（非 1.x 装饰器）
+- `.claude/settings.json` — 注册了 `ops-tools` MCP 服务，Claude Code 可直接调用
 
 ## API 端点
 
@@ -72,16 +74,6 @@ tinyPlatform/
 | `/api/tools` | GET | 工具列表，支持 `?category=` 过滤 |
 | `/api/tools/{name}` | GET | 执行工具（无参） |
 | `/api/tools/{name}` | POST | 执行工具（JSON body 传参） |
-
-## 架构：调用链路
-
-```
-Claude Code ──(stdio/MCP)──▶ mcp/server.py ──(HTTP)──▶ FastAPI 后端 ──(subprocess)──▶ Shell 脚本
-```
-
-- MCP 服务器从后端 `/api/tools` 拉取工具列表，转换为 MCP Tool 格式
-- 大模型调用工具时，MCP 转发到后端 `/api/tools/{name}`，后端执行脚本并返回 JSON
-- 脚本通过环境变量 `TOOL_PARAM_{KEY}` 接收参数
 
 ## 脚本规范
 
@@ -100,33 +92,72 @@ Claude Code ──(stdio/MCP)──▶ mcp/server.py ──(HTTP)──▶ FastA
 
 1. 编写 Shell 脚本放入 `scripts/`，遵循 JSON 输出规范
 2. 在 `backend/app/registry/tools.yaml` 添加工具定义
-3. 可选：调用 `backend/app/registry/tools.reload_registry()` 热重载，或重启后端
+3. 热重载：`python3 -c "from backend.app.registry.tools import reload_registry; reload_registry()"`（或重启后端）
 
 ## 关键技术细节
 
-### 依赖版本注意事项
-- MCP SDK 安装后 `starlette` 会升到 1.x，需 `fastapi>=0.140` 配合
-- 当前 `backend/requirements.txt` 写的是旧版本号（`fastapi==0.115.0`），实际环境已升级，下次重建环境时需更新
+### Token 认证
+- `backend/.env` 中配置 `API_TOKEN=ops-token-2024`，所有 `/api/*` 请求必须携带 `Authorization: Bearer <token>` header
+- `/health` 无需认证
+- MCP 服务器通过环境变量 `API_TOKEN` 获取 token，自动附加到对后端的 HTTP 请求
+- Claude Code 配置在 `.claude/settings.json` 的 `env` 块中设置 `API_TOKEN`
+- 认证逻辑在 `backend/app/utils/auth.py`，通过 FastAPI `Depends` 挂载到 router
 
 ### MCP SDK 2.0 API（与 1.x 不兼容）
-- 导入：`from mcp.server.lowlevel import Server`（不是 `from mcp.server`）
-- 注册：`server.add_request_handler("tools/list", PaginatedRequestParams, handler)`（不是装饰器）
-- Handler 签名：`async def handler(ctx, params)`（两个参数，ctx 在前）
-- Tool 字段：`input_schema`（蛇形，不是驼峰 `inputSchema`）
-- **所有 `print()` 必须输出到 stderr**：`print(msg, file=sys.stderr, flush=True)`
+- 导入：`from mcp.server.lowlevel import Server`
+- 注册：`server.add_request_handler("tools/list", PaginatedRequestParams, handler)`（非装饰器模式）
+- Handler 签名：`async def handler(ctx, params)`（ctx 在前，两个参数）
+- Tool 字段：`input_schema`（蛇形，非驼峰 `inputSchema`）
+- **所有 `print()` 必须输出到 stderr**：`print(msg, file=sys.stderr, flush=True)`，stdout 专用于 JSONRPC
+
+### 依赖版本
+- MCP SDK 安装后 `starlette` 升到 1.x，需 `fastapi>=0.140` 配合
+- `backend/requirements.txt` 写的 `fastapi==0.115.0` 已过时，重建环境时需更新
+
+### Docker 配置细节
+- **backend**: 暴露 8000，脚本目录通过 volume 挂载 `./scripts:/scripts:ro`，环境变量由 docker-compose 注入
+- **mcp**: 暴露 8080，使用 `MCP_TRANSPORT=http` 启动 Streamable HTTP 模式，通过 `BACKEND_API_URL=http://backend:8000` 连接后端
+- Claude Code 连接容器化 MCP 时，在 `.claude/settings.json` 中配置 HTTP 类型：
+  ```json
+  {
+    "mcpServers": {
+      "ops-tools": {
+        "type": "http",
+        "url": "http://127.0.0.1:8080/mcp"
+      }
+    }
+  }
+  ```
+- 本地开发时保持原有 stdio 模式（`mcp/server.py` 默认 `MCP_TRANSPORT=stdio`）
 
 ### 测试命令备忘
 ```bash
-# 后端测试
+# 后端测试（需带 token）
+TOKEN="ops-token-2024"
 curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:8000/api/tools
-curl http://127.0.0.1:8000/api/tools/get_time
-curl -X POST http://127.0.0.1:8000/api/tools/sys_check -H 'Content-Type: application/json' -d '{}'
-curl http://127.0.0.1:8000/api/tools/nonexistent   # 应返回 404
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/tools
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/tools/get_time
+curl -H "Authorization: Bearer $TOKEN" -X POST http://127.0.0.1:8000/api/tools/sys_check -H 'Content-Type: application/json' -d '{}'
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/tools/nonexistent   # 应返回 404
+curl http://127.0.0.1:8000/api/tools           # 无 token → 401
 
 # MCP 测试
 python3 mcp/test_client.py
 
-# 热重载注册表
+# Docker 测试
+curl http://127.0.0.1:8080/health              # MCP 健康检查
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/tools
+
+# 热重载注册表（修改 tools.yaml 后）
 python3 -c "from backend.app.registry.tools import reload_registry; reload_registry()"
 ```
+
+## 当前状态
+
+| 组件 | 状态 |
+|------|------|
+| 脚本层、后端 API、工具注册（YAML+热重载）、MCP 服务、Claude Code 集成 | ✅ 完成 |
+| Token 认证（Bearer Token，env 配置，MCP 透传） | ✅ 完成 |
+| 优雅退出（SIGINT/SIGTERM 信号处理） | ✅ 完成 |
+| Docker 容器化（Dockerfile + docker-compose） | ✅ 完成 |
+| 前端页面 | ⬜ 未开始 |

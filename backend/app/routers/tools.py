@@ -2,15 +2,16 @@
 工具管理路由
 提供工具列表查询、工具执行等 API 端点
 """
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from app.models.tool_models import (
     ToolInfo, ToolListResponse, ToolExecuteResponse
 )
 from app.utils.executor import ScriptExecutor
 from typing import Optional
 from app.registry import tool_registry
+from app.utils.auth import verify_token
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(verify_token)])
 
 # 初始化脚本执行器
 executor = ScriptExecutor(scripts_dir="../scripts", timeout=30)

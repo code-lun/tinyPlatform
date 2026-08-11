@@ -1,0 +1,50 @@
+# ============================================================
+# 运维工具平台 - Docker Compose 编排
+# ============================================================
+
+services:
+  # ---- 后端 API 服务 ----
+  backend:
+    image: platform:v1
+    container_name: ops-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      # 挂载脚本目录（脚本变更无需重建镜像）
+      - ./scripts:/scripts:ro
+    environment:
+      - API_TOKEN=${API_TOKEN:-ops-token-2024}
+      - SCRIPTS_DIR=/scripts
+      - SCRIPT_TIMEOUT=30
+      - PORT=8000
+      - LOG_LEVEL=info
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # ---- MCP 服务（Streamable HTTP 模式） ----
+  mcp:
+    image: platform-mcp:v1
+    container_name: ops-mcp
+    ports:
+      - "8080:8080"
+    environment:
+      - BACKEND_API_URL=http://backend:8000
+      - API_TOKEN=${API_TOKEN:-ops-token-2024}
+      - MCP_TRANSPORT=http
+      - MCP_HTTP_PORT=8080
+      - REQUEST_TIMEOUT=30
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s

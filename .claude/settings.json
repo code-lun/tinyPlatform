@@ -5,7 +5,8 @@
       "command": "python3",
       "args": ["/opt/tinyPlatform/mcp/server.py"],
       "env": {
-        "BACKEND_API_URL": "http://127.0.0.1:8000"
+        "BACKEND_API_URL": "http://127.0.0.1:8000",
+        "API_TOKEN": "ops-token-2024"
       }
     }
   }

@@ -1,11 +1,16 @@
 """
 运维工具平台 - MCP 服务器
 基于 Model Context Protocol (MCP)，将后端 API 工具暴露给大模型
+
+支持两种传输模式（通过 MCP_TRANSPORT 环境变量切换）：
+  - stdio   — 标准输入输出（Claude Code 本地直接拉起进程）
+  - http    — Streamable HTTP（容器化部署，Claude Code 通过 HTTP 连接）
 """
 import asyncio
 import json
 import os
 import sys
+from contextlib import asynccontextmanager
 
 import httpx
 from mcp.server.lowlevel import Server
@@ -22,6 +27,15 @@ from mcp.types import (
 # ========== 配置 ==========
 BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://127.0.0.1:8000")
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "30.0"))
+API_TOKEN = os.getenv("API_TOKEN", "")
+MCP_TRANSPORT = os.getenv("MCP_TRANSPORT", "stdio")  # "stdio" | "http"
+
+
+def _auth_headers() -> dict:
+    """构建带 token 的请求头"""
+    if API_TOKEN:
+        return {"Authorization": f"Bearer {API_TOKEN}"}
+    return {}
 
 
 # ========== 辅助：向 stderr 输出日志（避免污染 stdio JSONRPC 通道） ==========
@@ -38,7 +52,10 @@ async def fetch_tools() -> list[Tool]:
     """调用后端 /api/tools 接口，转换为 MCP Tool 列表"""
     async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
         try:
-            resp = await client.get(f"{BACKEND_API_URL}/api/tools")
+            resp = await client.get(
+                f"{BACKEND_API_URL}/api/tools",
+                headers=_auth_headers(),
+            )
             resp.raise_for_status()
             data = resp.json()
         except Exception as e:
@@ -103,6 +120,7 @@ async def handle_call_tool(ctx, params: CallToolRequestParams) -> CallToolResult
             resp = await client.post(
                 f"{BACKEND_API_URL}/api/tools/{name}",
                 json=arguments,
+                headers=_auth_headers(),
             )
             resp.raise_for_status()
             result = resp.json()
@@ -152,10 +170,10 @@ server.add_request_handler("tools/list", PaginatedRequestParams, handle_list_too
 server.add_request_handler("tools/call", CallToolRequestParams, handle_call_tool)
 
 
-# ========== 启动入口 ==========
-async def main():
-    """启动 MCP 服务器（使用 stdio 传输）"""
-    log(f"[MCP] 服务器启动，后端地址: {BACKEND_API_URL}")
+# ========== stdio 传输模式（本地开发） ==========
+async def run_stdio():
+    """使用 stdio 传输启动 MCP 服务器"""
+    log(f"[MCP] stdio 模式启动，后端地址: {BACKEND_API_URL}")
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,
@@ -164,5 +182,72 @@ async def main():
         )
 
 
+# ========== HTTP 传输模式（容器化部署） ==========
+async def run_http():
+    """使用 Streamable HTTP 传输启动 MCP 服务器"""
+
+    # 延迟导入，避免 stdio 模式下需要安装 starlette/uvicorn
+    import anyio
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+    from mcp.server.streamable_http import StreamableHTTPServerTransport
+
+    import uvicorn
+
+    # 创建 HTTP 传输（mcp_session_id 作为路径标识）
+    transport = StreamableHTTPServerTransport(
+        mcp_session_id="ops-tools",
+        is_json_response_enabled=True,
+    )
+
+    # ASGI 路由：将 /mcp 路径交给 transport 处理
+    async def mcp_endpoint(scope, receive, send):
+        await transport.handle_request(scope, receive, send)
+
+    # 健康检查端点
+    async def health(scope, receive, send):
+        from starlette.responses import JSONResponse
+        response = JSONResponse({
+            "status": "healthy",
+            "service": "ops-mcp-server",
+            "transport": "streamable-http",
+        })
+        await response(scope, receive, send)
+
+    @asynccontextmanager
+    async def lifespan(app):
+        """在应用生命周期内管理 MCP transport 连接"""
+        async with transport.connect() as (read_stream, write_stream):
+            # 在后台 task group 中运行 MCP server
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(
+                    server.run,
+                    read_stream,
+                    write_stream,
+                    server.create_initialization_options(),
+                )
+                log(f"[MCP] HTTP 模式启动，后端地址: {BACKEND_API_URL}")
+                yield
+                # 关闭时取消后台任务
+                tg.cancel_scope.cancel()
+
+    app = Starlette(
+        lifespan=lifespan,
+        routes=[
+            Route("/mcp", mcp_endpoint, methods=["GET", "POST", "DELETE"]),
+            Route("/health", health, methods=["GET"]),
+        ],
+    )
+
+    http_port = int(os.getenv("MCP_HTTP_PORT", "8080"))
+    config = uvicorn.Config(app, host="0.0.0.0", port=http_port, log_level="info")
+    uvicorn_server = uvicorn.Server(config)
+    await uvicorn_server.serve()
+
+
+# ========== 启动入口 ==========
 if __name__ == "__main__":
-    asyncio.run(main())
+    if MCP_TRANSPORT == "http":
+        asyncio.run(run_http())
+    else:
+        asyncio.run(run_stdio())
