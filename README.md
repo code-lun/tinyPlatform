@@ -1,4 +1,4 @@
-# Tiny-Platform
+# tinyPlatform
 
 基于 FastAPI + MCP 的运维工具平台，Shell 脚本 → API → MCP 协议 → 大模型调用，全链路打通。
 
