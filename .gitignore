@@ -1,3 +1,5 @@
 backend/.env
 mcp/.env
 demo.sh
+logs/*
+frontend/
