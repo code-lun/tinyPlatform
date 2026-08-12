@@ -11,19 +11,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### 本地开发
 
 ```bash
-# 方式一（推荐，含优雅退出）：python -m app.main，Ctrl+C 自动释放端口
-cd /opt/Tiny-Platform/backend && python3 -m app.main &
+# 方式一（&后台运行）：
+cd /opt/Tiny-Platform/backend && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+# 注：& 后台运行 + Ctrl+C 不会终止进程，需 kill 或 fg 后 Ctrl+C
 
 # 方式二（CLI）：uvicorn，前台运行时 Ctrl+C 可退出
 cd /opt/Tiny-Platform/backend && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
-# 注：& 后台运行 + Ctrl+C 不会终止进程，需 kill 或 fg 后 Ctrl+C
+
 
 # 验证后端（health 无需 token，API 需要 token）
 curl http://127.0.0.1:8000/health
-curl -H "Authorization: Bearer ops-token-2024" http://127.0.0.1:8000/api/tools | python3 -m json.tool
+curl -H "Authorization: Bearer tinyPlatform-token-2024" http://127.0.0.1:8000/api/tools | python3 -m json.tool
 
-# 测试 MCP 全链路（需先启动后端）
-python3 mcp/test_client.py
 ```
 
 ### Docker 部署
@@ -37,7 +36,7 @@ docker compose logs -f
 
 # 验证
 curl http://127.0.0.1:8000/health
-curl -H "Authorization: Bearer ops-token-2024" http://127.0.0.1:8000/api/tools
+curl -H "Authorization: Bearer tinyPlatform-token-2024" http://127.0.0.1:8000/api/tools
 curl http://127.0.0.1:8080/health   # MCP 健康检查
 
 # 停止
@@ -60,11 +59,14 @@ Docker 部署：Claude Code ──(HTTP/MCP)──▶ mcp:8080 ──(HTTP)─�
 | 容器化 | `Dockerfile*`, `docker-compose.yml` | Docker Compose 一键部署，健康检查，卷挂载 |
 
 关键文件：
+- `backend/app/core/config.py` — 全局配置模块，所有环境变量的唯一入口（优先级：Shell > .env > 默认值）
 - `backend/app/registry/__init__.py` — 全局 `tool_registry` 实例，所有路由通过它查询/执行工具
 - `backend/app/registry/tools.yaml` — 工具定义（名称、脚本、分类、参数、超时），修改后支持热重载
-- `backend/app/utils/executor.py` — `ScriptExecutor` 封装 subprocess，以 `scripts/` 为基准目录
-- `mcp/server.py` — MCP 服务端，`add_request_handler()` 注册模式（非 1.x 装饰器）
-- `.claude/settings.json` — 注册了 `ops-tools` MCP 服务，Claude Code 可直接调用
+- `backend/app/utils/executor.py` — `ScriptExecutor` 封装 subprocess，`execute()` 支持可选 `timeout` 参数（线程安全），执行过程全链路日志
+- `backend/app/utils/logger.py` — 全局单例 `Logger`，stderr 彩色输出 + 文件按天轮转
+- `backend/app/utils/auth.py` — Bearer Token 验证，通过 FastAPI `Depends` 挂载到 `/api/*` 路由
+- `mcp/server.py` — MCP 服务端，`add_request_handler()` 注册模式（非 1.x 装饰器），共享 `httpx.AsyncClient` 连接池
+- `.claude/settings.json` — 注册了 `tinyPlatform-mcp` MCP 服务，Claude Code 可直接调用
 
 ## API 端点
 
@@ -92,20 +94,29 @@ Docker 部署：Claude Code ──(HTTP/MCP)──▶ mcp:8080 ──(HTTP)─�
 
 1. 编写 Shell 脚本放入 `scripts/`，遵循 JSON 输出规范
 2. 在 `backend/app/registry/tools.yaml` 添加工具定义
-3. 热重载：`python3 -c "from backend.app.registry.tools import reload_registry; reload_registry()"`（或重启后端）
+3. 热重载：`python3 -c "from app.registry import tool_registry; tool_registry.reload()"`（或重启后端）
 
 ## 关键技术细节
 
+### 统一配置模块
+- `backend/app/core/config.py` — 所有环境变量的**唯一入口**，其他地方禁止直接 `os.getenv()`
+- 配置优先级（由高到低）：Shell 环境变量 → `backend/.env` 文件 → `config.py` 默认值
+- `load_dotenv()` 只在 `main.py` 和 `config.py` 中调用（双保险，不依赖导入顺序）
+- 新增配置项只需在 `config.py` 加一行 `os.getenv("KEY", "default")`，无需改其他文件
+- 路径类配置（如 `SCRIPTS_DIR`）会自动解析为绝对路径
+
 ### 全局日志系统
-- `backend/app/utils/logger.py` — 全局单例 `Logger` 类，统一输出到 stderr（兼容 MCP stdio）
+- `backend/app/utils/logger.py` — 全局单例 `Logger` 类，统一输出到 stderr（兼容 MCP stdio）和日志文件
 - 日志等级：`debug | info | warning | error`，由 `LOG_LEVEL` 环境变量控制（默认 `info`）
 - 输出格式：`[YYYY-MM-DD HH:MM:SS] [LEVEL   ] [TAG] message`
 - 终端自动检测 TTY 以决定是否启用彩色输出
 - 用法：`from app.utils.logger import logger` → `logger.info("TAG", "message")`
 - 运行时切换等级：`logger.set_level("debug")`
+- **文件日志**：默认写入 `logs/tinyPlatform-YYYY-MM-DD.log`，按天自动轮转，线程安全
+- 通过 `LOG_DIR` 自定义日志目录，`LOG_FILE_ENABLED=true` 打开文件日志（默认关闭）
 
 ### Token 认证
-- `backend/.env` 中配置 `API_TOKEN=ops-token-2024`，所有 `/api/*` 请求必须携带 `Authorization: Bearer <token>` header
+- `backend/.env` 中配置 `API_TOKEN=tinyPlatform-token-2024`，所有 `/api/*` 请求必须携带 `Authorization: Bearer <token>` header
 - `/health` 无需认证
 - MCP 服务器通过环境变量 `API_TOKEN` 获取 token，自动附加到对后端的 HTTP 请求
 - Claude Code 配置在 `.claude/settings.json` 的 `env` 块中设置 `API_TOKEN`
@@ -123,13 +134,13 @@ Docker 部署：Claude Code ──(HTTP/MCP)──▶ mcp:8080 ──(HTTP)─�
 - `backend/requirements.txt` 写的 `fastapi==0.115.0` 已过时，重建环境时需更新
 
 ### Docker 配置细节
-- **backend**: 暴露 8000，脚本目录通过 volume 挂载 `./scripts:/scripts:ro`，环境变量由 docker-compose 注入
-- **mcp**: 暴露 8080，使用 `MCP_TRANSPORT=http` 启动 Streamable HTTP 模式，通过 `BACKEND_API_URL=http://backend:8000` 连接后端
+- **backend**: 暴露 8000，脚本目录通过 volume 挂载 `./scripts:/scripts:ro`，日志目录挂载 `./logs:/logs`，环境变量由 docker-compose 注入
+- **mcp**: 暴露 8080，使用 `MCP_TRANSPORT=http` 启动 Streamable HTTP 模式，通过 `BACKEND_API_URL=http://backend:8000` 连接后端，共享 `httpx.AsyncClient` 连接池
 - Claude Code 连接容器化 MCP 时，在 `.claude/settings.json` 中配置 HTTP 类型：
   ```json
   {
     "mcpServers": {
-      "ops-tools": {
+      "tinyPlatform-mcp": {
         "type": "http",
         "url": "http://127.0.0.1:8080/mcp"
       }
@@ -141,7 +152,7 @@ Docker 部署：Claude Code ──(HTTP/MCP)──▶ mcp:8080 ──(HTTP)─�
 ### 测试命令备忘
 ```bash
 # 后端测试（需带 token）
-TOKEN="ops-token-2024"
+TOKEN="tinyPlatform-token-2024"
 curl http://127.0.0.1:8000/health
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/tools
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/tools/get_time
@@ -157,7 +168,7 @@ curl http://127.0.0.1:8080/health              # MCP 健康检查
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8000/api/tools
 
 # 热重载注册表（修改 tools.yaml 后）
-python3 -c "from backend.app.registry.tools import reload_registry; reload_registry()"
+python3 -c "from app.registry import tool_registry; tool_registry.reload()"
 ```
 
 ## 当前状态
@@ -166,6 +177,8 @@ python3 -c "from backend.app.registry.tools import reload_registry; reload_regis
 |------|------|
 | 脚本层、后端 API、工具注册（YAML+热重载）、MCP 服务、Claude Code 集成 | ✅ 完成 |
 | Token 认证（Bearer Token，env 配置，MCP 透传） | ✅ 完成 |
+| 统一配置模块（`backend/app/core/config.py`，三层优先级） | ✅ 完成 |
+| 全局日志系统（stderr 彩色 + 文件按天轮转，全链路覆盖） | ✅ 完成 |
 | 优雅退出（SIGINT/SIGTERM 信号处理） | ✅ 完成 |
-| Docker 容器化（Dockerfile + docker-compose） | ✅ 完成 |
+| Docker 容器化（Dockerfile + docker-compose，日志卷持久化） | ✅ 完成 |
 | 前端页面 | ⬜ 未开始 |

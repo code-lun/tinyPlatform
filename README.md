@@ -1,5 +1,5 @@
 # Tiny-Platform
-ops-tool-platform/
+tinyPlatform/
 ├── README.md                        # 项目整体介绍、启动方式
 ├── .gitignore
 ├── docker-compose.yml               # 本地快速启动所有服务（可选）

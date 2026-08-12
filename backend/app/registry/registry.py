@@ -51,10 +51,11 @@ class ToolRegistry:
 
     def _validate_tool(self, tool: Dict[str, Any]) -> bool:
         """验证工具定义完整性并设置默认值"""
+        tool_name = tool.get("name", "?")
         required = ["name", "script", "category"]
         for field in required:
             if field not in tool or not tool[field]:
-                logger.warning("REGISTRY", f"工具缺少必需字段 '{field}'，已跳过")
+                logger.warning("REGISTRY", f"工具 '{tool_name}' 缺少必需字段 '{field}'，已跳过")
                 return False
 
         tool.setdefault("display_name", tool["name"])
@@ -122,7 +123,9 @@ class ToolRegistry:
 
     def reload(self):
         """重新加载 YAML 配置文件（热更新）"""
+        logger.info("REGISTRY", "收到热重载请求，开始重新加载工具配置...")
         self._load()
+        logger.info("REGISTRY", f"热重载完成，当前 {self.count} 个启用的工具")
 
     @property
     def count(self) -> int:

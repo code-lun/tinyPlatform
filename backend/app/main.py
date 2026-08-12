@@ -2,16 +2,20 @@
 FastAPI 应用入口
 注册路由、配置中间件
 """
-import os
+import datetime
 import signal
-import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from dotenv import load_dotenv
-load_dotenv()  # 加载 backend/.env 环境变量（必须在其他 import 之前）
+
+# 显式加载 backend/.env（必须在其他 import 之前）
+load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from app.core.config import PORT, LOG_LEVEL, ALLOWED_ORIGINS
 from app.routers import tools
 from app.utils.logger import logger
 
@@ -20,9 +24,7 @@ from app.utils.logger import logger
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期：启动 → 运行 → 优雅关闭"""
-    # 启动
     yield
-    # 关闭
     logger.info("SERVER", "正在关闭服务，释放资源...")
 
 
@@ -31,15 +33,15 @@ app = FastAPI(
     title="运维工具平台 API",
     description="统一运维工具调用接口，支持脚本执行和管理",
     version="1.0.0",
-    docs_url="/docs",           # Swagger UI
-    redoc_url="/redoc",         # ReDoc
+    docs_url="/docs",
+    redoc_url="/redoc",
     lifespan=lifespan,
 )
 
-# CORS 配置（允许前端跨域请求）
+# CORS 配置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],        # 生产环境应限制具体域名
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -48,18 +50,16 @@ app.add_middleware(
 # 注册路由
 app.include_router(tools.router, prefix="/api", tags=["工具管理"])
 
+
 # ========== 健康检查端点 ==========
 @app.get("/health", tags=["系统"])
 async def health_check():
-    """
-    健康检查接口
-    返回服务运行状态和基本信息
-    """
+    """健康检查接口，返回服务运行状态和基本信息"""
     return {
         "status": "healthy",
-        "service": "ops-tool-platform",
+        "service": "tinyPlatform-backend",
         "version": "1.0.0",
-        "timestamp": __import__("datetime").datetime.now().isoformat()
+        "timestamp": datetime.datetime.now().isoformat(),
     }
 
 
@@ -84,12 +84,13 @@ if __name__ == "__main__":
     config = uvicorn.Config(
         "app.main:app",
         host="0.0.0.0",
-        port=8000,
+        port=PORT,
         reload=False,
-        log_level=os.getenv("LOG_LEVEL", "info"),
+        log_level=LOG_LEVEL,
     )
     server = uvicorn.Server(config)
 
+    logger.info("SERVER", f"服务启动于 http://0.0.0.0:{PORT}")
     try:
         server.run()
     except KeyboardInterrupt:

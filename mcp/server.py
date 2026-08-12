@@ -8,8 +8,6 @@
 """
 import asyncio
 import json
-import os
-import sys
 from contextlib import asynccontextmanager
 from datetime import datetime
 
@@ -25,16 +23,40 @@ from mcp.types import (
     PaginatedRequestParams,
 )
 
-# ========== 配置 ==========
-BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://127.0.0.1:8000")
-REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "30.0"))
-API_TOKEN = os.getenv("API_TOKEN", "")
-MCP_TRANSPORT = os.getenv("MCP_TRANSPORT", "stdio")  # "stdio" | "http"
-LOG_LEVEL = os.getenv("LOG_LEVEL", "info")
+from config import (
+    BACKEND_API_URL,
+    REQUEST_TIMEOUT,
+    API_TOKEN,
+    MCP_TRANSPORT,
+    MCP_HTTP_PORT,
+    LOG_LEVEL,
+)
+from logger import logger
 
-# 日志等级数值
-_LOG_LEVELS = {"debug": 10, "info": 20, "warning": 30, "error": 40}
-_LOG_THRESHOLD = _LOG_LEVELS.get(LOG_LEVEL.lower().strip(), 20)
+# ========== 配置（统一入口: config.py） ==========
+
+# ========== 共享 HTTP 客户端（复用连接池） ==========
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    """获取共享的 httpx AsyncClient（懒初始化，连接复用）"""
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(REQUEST_TIMEOUT),
+        )
+        logger.debug("MCP", "HTTP 客户端已创建（连接池复用）")
+    return _http_client
+
+
+async def _close_http_client():
+    """关闭共享的 HTTP 客户端（释放连接池）"""
+    global _http_client
+    if _http_client is not None:
+        await _http_client.aclose()
+        _http_client = None
+        logger.debug("MCP", "HTTP 客户端已关闭")
 
 
 def _auth_headers() -> dict:
@@ -44,33 +66,24 @@ def _auth_headers() -> dict:
     return {}
 
 
-# ========== 日志辅助（输出到 stderr，避免污染 stdio JSONRPC 通道） ==========
-def log(level: str, tag: str, msg: str):
-    """统一日志输出，带时间戳和等级"""
-    if _LOG_LEVELS.get(level, 20) < _LOG_THRESHOLD:
-        return
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] [{level:<7s}] [{tag}] {msg}", file=sys.stderr, flush=True)
-
-
 # ========== MCP 服务器实例 ==========
-server = Server("ops-tool-platform")
+server = Server("tinyPlatform-mcp")
 
 
 # ========== 从后端获取工具列表 ==========
 async def fetch_tools() -> list[Tool]:
     """调用后端 /api/tools 接口，转换为 MCP Tool 列表"""
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-        try:
-            resp = await client.get(
-                f"{BACKEND_API_URL}/api/tools",
-                headers=_auth_headers(),
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        except Exception as e:
-            log("error", "MCP", f"获取工具列表失败: {e}")
-            return []
+    client = _get_http_client()
+    try:
+        resp = await client.get(
+            f"{BACKEND_API_URL}/api/tools",
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        logger.error("MCP", f"获取工具列表失败: {e}")
+        return []
 
     tools = []
     for item in data.get("tools", []):
@@ -81,9 +94,7 @@ async def fetch_tools() -> list[Tool]:
             "required": [],
         }
         for param in item.get("params", []):
-            param_schema = {
-                "description": param.get("description", ""),
-            }
+            param_schema: dict = {"description": param.get("description", "")}
             ptype = param.get("type", "string")
             if ptype == "number":
                 param_schema["type"] = "number"
@@ -107,7 +118,7 @@ async def fetch_tools() -> list[Tool]:
             )
         )
 
-    log("info", "MCP", f"已加载 {len(tools)} 个工具")
+    logger.info("MCP", f"已加载 {len(tools)} 个工具")
     return tools
 
 
@@ -119,52 +130,48 @@ async def handle_list_tools(ctx, params: PaginatedRequestParams) -> ListToolsRes
 
 
 # ========== MCP 工具执行处理器 ==========
+def _build_error_result(message: str) -> CallToolResult:
+    """构建 MCP 错误响应，统一错误输出格式"""
+    return CallToolResult(
+        content=[
+            TextContent(
+                type="text",
+                text=json.dumps({
+                    "status": "error",
+                    "message": message,
+                }, ensure_ascii=False),
+            )
+        ]
+    )
+
+
 async def handle_call_tool(ctx, params: CallToolRequestParams) -> CallToolResult:
     """当大模型调用工具时，转发到后端执行并返回结果"""
     name = params.name
     arguments = params.arguments or {}
 
-    # 调用后端 POST /api/tools/{name}
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+    client = _get_http_client()
+    try:
+        resp = await client.post(
+            f"{BACKEND_API_URL}/api/tools/{name}",
+            json=arguments,
+            headers=_auth_headers(),
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        logger.info("MCP", f"工具调用成功 tool={name}")
+    except httpx.HTTPStatusError as e:
+        error_detail = "未知错误"
         try:
-            resp = await client.post(
-                f"{BACKEND_API_URL}/api/tools/{name}",
-                json=arguments,
-                headers=_auth_headers(),
-            )
-            resp.raise_for_status()
-            result = resp.json()
-        except httpx.HTTPStatusError as e:
-            error_detail = "未知错误"
-            try:
-                error_detail = e.response.json().get("message", str(e))
-            except Exception:
-                error_detail = str(e)
-            return CallToolResult(
-                content=[
-                    TextContent(
-                        type="text",
-                        text=json.dumps({
-                            "status": "error",
-                            "message": f"后端调用失败: {error_detail}"
-                        }, ensure_ascii=False),
-                    )
-                ]
-            )
-        except Exception as e:
-            return CallToolResult(
-                content=[
-                    TextContent(
-                        type="text",
-                        text=json.dumps({
-                            "status": "error",
-                            "message": f"请求后端异常: {str(e)}"
-                        }, ensure_ascii=False),
-                    )
-                ]
-            )
+            error_detail = e.response.json().get("message", str(e))
+        except Exception:
+            error_detail = str(e)
+        logger.error("MCP", f"后端返回错误 tool={name} status={e.response.status_code}")
+        return _build_error_result(f"后端调用失败: {error_detail}")
+    except Exception as e:
+        logger.error("MCP", f"请求后端异常 tool={name}: {e}")
+        return _build_error_result(f"请求后端异常: {str(e)}")
 
-    # 将后端返回的结果包装为文本内容
     return CallToolResult(
         content=[
             TextContent(
@@ -181,54 +188,70 @@ server.add_request_handler("tools/call", CallToolRequestParams, handle_call_tool
 
 
 # ========== stdio 传输模式（本地开发） ==========
-async def run_stdio():
-    """使用 stdio 传输启动 MCP 服务器"""
-    log("info", "MCP", f"stdio 模式启动，后端地址: {BACKEND_API_URL}")
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            server.create_initialization_options(),
-        )
+# async def run_stdio() -> None:
+#     """使用 stdio 传输启动 MCP 服务器"""
+#     logger.info("MCP", f"stdio 模式启动，后端地址: {BACKEND_API_URL}")
+#     try:
+#         async with stdio_server() as (read_stream, write_stream):
+#             await server.run(
+#                 read_stream,
+#                 write_stream,
+#                 server.create_initialization_options(),
+#             )
+#     finally:
+#         await _close_http_client()
 
+# ========== stdio 传输模式（本地开发）优雅退出版本 ==========
+async def run_stdio() -> None:
+    """使用 stdio 传输启动 MCP 服务器"""
+    logger.info("MCP", f"stdio 模式启动，后端地址: {BACKEND_API_URL}")
+    try:
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                server.create_initialization_options(),
+            )
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        logger.info("MCP", "收到中断信号，正在优雅关闭...")
+    finally:
+        await _close_http_client()
+        logger.info("MCP", "MCP 服务器已退出")
 
 # ========== HTTP 传输模式（容器化部署） ==========
-async def run_http():
+async def run_http() -> None:
     """使用 Streamable HTTP 传输启动 MCP 服务器"""
 
     # 延迟导入，避免 stdio 模式下需要安装 starlette/uvicorn
     import anyio
     from starlette.applications import Starlette
-    from starlette.routing import Route
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse
+    from starlette.routing import Mount, Route
     from mcp.server.streamable_http import StreamableHTTPServerTransport
 
     import uvicorn
 
     # 创建 HTTP 传输（mcp_session_id 作为路径标识）
     transport = StreamableHTTPServerTransport(
-        mcp_session_id="ops-tools",
+        mcp_session_id="tinyPlatform-mcp",
         is_json_response_enabled=True,
     )
 
-    # ASGI 路由：将 /mcp 路径交给 transport 处理
-    async def mcp_endpoint(scope, receive, send):
-        await transport.handle_request(scope, receive, send)
-
-    # 健康检查端点
-    async def health(scope, receive, send):
-        from starlette.responses import JSONResponse
-        response = JSONResponse({
+    # MCP 端点使用 Mount 挂载原始 ASGI handler
+    # 健康检查端点（无需认证，标准 Starlette request → Response 模式）
+    async def health(request: Request) -> JSONResponse:
+        return JSONResponse({
             "status": "healthy",
-            "service": "ops-mcp-server",
+            "service": "tinyPlatform-mcp",
             "transport": "streamable-http",
+            "timestamp": datetime.now().isoformat(),
         })
-        await response(scope, receive, send)
 
     @asynccontextmanager
     async def lifespan(app):
         """在应用生命周期内管理 MCP transport 连接"""
         async with transport.connect() as (read_stream, write_stream):
-            # 在后台 task group 中运行 MCP server
             async with anyio.create_task_group() as tg:
                 tg.start_soon(
                     server.run,
@@ -236,23 +259,30 @@ async def run_http():
                     write_stream,
                     server.create_initialization_options(),
                 )
-                log("info", "MCP", f"HTTP 模式启动，后端地址: {BACKEND_API_URL}")
+                logger.info("MCP", f"HTTP 模式启动，后端地址: {BACKEND_API_URL}")
                 yield
-                # 关闭时取消后台任务
                 tg.cancel_scope.cancel()
+        await _close_http_client()
 
     app = Starlette(
         lifespan=lifespan,
         routes=[
-            Route("/mcp", mcp_endpoint, methods=["GET", "POST", "DELETE"]),
+            Mount("/mcp", app=transport.handle_request),
             Route("/health", health, methods=["GET"]),
         ],
     )
 
-    http_port = int(os.getenv("MCP_HTTP_PORT", "8080"))
-    config = uvicorn.Config(app, host="0.0.0.0", port=http_port, log_level="info")
+    config = uvicorn.Config(app, host="0.0.0.0", port=MCP_HTTP_PORT, log_level=LOG_LEVEL)
     uvicorn_server = uvicorn.Server(config)
-    await uvicorn_server.serve()
+    # await uvicorn_server.serve()
+    """优雅退出"""
+    try:
+        await uvicorn_server.serve()
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        logger.info("MCP", "收到中断信号，正在优雅关闭...")
+    finally:
+        await _close_http_client()
+        logger.info("MCP", "MCP 服务器已退出")
 
 
 # ========== 启动入口 ==========

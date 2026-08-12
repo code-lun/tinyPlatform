@@ -1,5 +1,24 @@
 backend/.env
 mcp/.env
 demo.sh
-logs/*
+logs/
 frontend/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Backup files
+*.bak
+*~
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store

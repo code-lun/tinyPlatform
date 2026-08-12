@@ -1,9 +1,9 @@
 """
-全局日志模块
+MCP 服务日志模块（从 backend/app/utils/logger.py 适配）
 提供统一的日志记录功能，支持多等级、彩色输出、时间戳、文件写入
 
 用法:
-    from app.utils.logger import logger
+    from logger import logger
 
     logger.debug("TAG", "调试信息")
     logger.info("TAG", "常规信息")
@@ -19,7 +19,7 @@
 环境变量：
     LOG_LEVEL         — 日志等级: debug | info | warning | error（默认 info）
     LOG_DIR           — 日志文件目录（默认项目根目录下的 logs/）
-    LOG_FILE_ENABLED  — 是否启用文件日志，设为 "false" 关闭（默认启用）
+    LOG_FILE_ENABLED  — 是否启用文件日志，设为 "true" 开启（默认关闭）
 """
 import os
 import sys
@@ -76,8 +76,8 @@ class Logger:
         "critical": LogLevel.ERROR,
     }
 
-    # ---- 项目根目录（logger.py → utils → app → backend → 项目根） ----
-    _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+    # ---- 项目根目录（logger.py → mcp → 项目根） ----
+    _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
     def __new__(cls):
         if cls._instance is None:
@@ -190,8 +190,8 @@ class Logger:
             except OSError:
                 pass
 
-        # 打开新文件   日志前缀名位置"platform-"
-        log_path = self._log_dir / f"platform-{today}.log"
+        # 打开新文件    日志名前缀位置
+        log_path = self._log_dir / f"mcp-{today}.log"
         try:
             self._file_handle = open(str(log_path), "a", encoding="utf-8")
             self._current_date = today
