@@ -8,6 +8,8 @@
 """
 import asyncio
 import json
+import os
+import signal
 from contextlib import asynccontextmanager
 from datetime import datetime
 
@@ -188,35 +190,23 @@ server.add_request_handler("tools/call", CallToolRequestParams, handle_call_tool
 
 
 # ========== stdio 传输模式（本地开发） ==========
-# async def run_stdio() -> None:
-#     """使用 stdio 传输启动 MCP 服务器"""
-#     logger.info("MCP", f"stdio 模式启动，后端地址: {BACKEND_API_URL}")
-#     try:
-#         async with stdio_server() as (read_stream, write_stream):
-#             await server.run(
-#                 read_stream,
-#                 write_stream,
-#                 server.create_initialization_options(),
-#             )
-#     finally:
-#         await _close_http_client()
-
-# ========== stdio 传输模式（本地开发）优雅退出版本 ==========
 async def run_stdio() -> None:
-    """使用 stdio 传输启动 MCP 服务器"""
+    """使用 stdio 传输启动 MCP 服务器
+
+    正常退出：客户端（Claude Code 等）关闭 stdin → server.run() 返回 → 清理。
+    手动 Ctrl+C：由 __main__ 里注册的 signal.signal 处理器兜底（见下）。
+    注意：不能在协程里取消 server.run() 来退出——MCP SDK 的 stdio 读线程
+    （closefd=False）无法被 asyncio 取消，强行取消会挂在 stdio_server 退出上。
+    """
     logger.info("MCP", f"stdio 模式启动，后端地址: {BACKEND_API_URL}")
-    try:
-        async with stdio_server() as (read_stream, write_stream):
-            await server.run(
-                read_stream,
-                write_stream,
-                server.create_initialization_options(),
-            )
-    except (KeyboardInterrupt, asyncio.CancelledError):
-        logger.info("MCP", "收到中断信号，正在优雅关闭...")
-    finally:
-        await _close_http_client()
-        logger.info("MCP", "MCP 服务器已退出")
+    async with stdio_server() as (read_stream, write_stream):
+        await server.run(
+            read_stream,
+            write_stream,
+            server.create_initialization_options(),
+        )
+    await _close_http_client()
+    logger.info("MCP", "MCP 服务器已退出")
 
 # ========== HTTP 传输模式（容器化部署） ==========
 async def run_http() -> None:
@@ -262,7 +252,7 @@ async def run_http() -> None:
                 logger.info("MCP", f"HTTP 模式启动，后端地址: {BACKEND_API_URL}")
                 yield
                 tg.cancel_scope.cancel()
-        await _close_http_client()
+        # HTTP 客户端的清理由 serve() 返回后统一执行，不在此处重复调用
 
     app = Starlette(
         lifespan=lifespan,
@@ -274,11 +264,13 @@ async def run_http() -> None:
 
     config = uvicorn.Config(app, host="0.0.0.0", port=MCP_HTTP_PORT, log_level=LOG_LEVEL)
     uvicorn_server = uvicorn.Server(config)
-    # await uvicorn_server.serve()
-    """优雅退出"""
+
+    # uvicorn 自带 SIGINT/SIGTERM 处理：收到信号会触发 lifespan 优雅关闭，
+    # 但 capture_signals 退出时会用 signal.raise_signal 重新抛出信号
+    # （表现为 KeyboardInterrupt），所以这里仍需捕获它，避免打印堆栈。
     try:
         await uvicorn_server.serve()
-    except (KeyboardInterrupt, asyncio.CancelledError):
+    except KeyboardInterrupt:
         logger.info("MCP", "收到中断信号，正在优雅关闭...")
     finally:
         await _close_http_client()
@@ -286,8 +278,23 @@ async def run_http() -> None:
 
 
 # ========== 启动入口 ==========
+def _handle_signal(sig, frame):
+    """stdio 模式的 SIGINT/SIGTERM 处理器。
+
+    MCP SDK 的 stdio 传输用 worker 线程阻塞读 stdin（closefd=False），
+    asyncio 取消无法中断它，在协程里取消 server.run() 会挂在 stdio_server
+    退出上；而默认 KeyboardInterrupt 又会在 asyncio.run() 后打印堆栈、且退出时
+    被该线程卡住。所以这里直接记录日志后 os._exit 干净退出。
+    http 模式不安装此处理器——uvicorn 自己处理信号。
+    """
+    logger.info("MCP", f"收到 {signal.Signals(sig).name} 信号，正在退出...")
+    os._exit(0)
+
+
 if __name__ == "__main__":
     if MCP_TRANSPORT == "http":
         asyncio.run(run_http())
     else:
+        signal.signal(signal.SIGINT, _handle_signal)
+        signal.signal(signal.SIGTERM, _handle_signal)
         asyncio.run(run_stdio())
