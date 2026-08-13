@@ -37,18 +37,11 @@ tinyPlatform/
 │   └── .env                         # 环境变量配置（API_TOKEN 等）
 │
 ├── mcp/                             # ③ MCP 服务器（独立服务，可选）
-│   ├── server.py                    # MCP 协议实现，调用 backend API
-│   ├── requirements.txt             # mcp>=2.0, httpx, starlette, uvicorn
-│   ├── Dockerfile
-│   └── .env
-| ── frontend/                        # ④ 前端（纯静态，解耦）
-    ├── index.html                   # 主页面，调用 backend API
-    ├── css/
-    │   └── style.css
-    ├── js/
-    │   └── app.js                   # fetch 调用后端，渲染数据
-    ├── nginx.conf                   # Nginx 配置（用于容器）
-    └── Dockerfile                   # 基于 nginx:alpine 托管静态文件
+    ├── server.py                    # MCP 协议实现，调用 backend API
+    ├── requirements.txt             # mcp>=2.0, httpx, starlette, uvicorn
+    ├── Dockerfile
+    └── .env
+
 
 
 ```
@@ -151,24 +144,26 @@ Docker 通过操作系统级虚拟化（Linux namespace + cgroup）实现应用�
 
 ### 1. 克隆项目 & 安装依赖
 
+#### 克隆到本地
 ```bash
-# 克隆到本地
-git pull  # 或 git clone <repo-url>
-cd Tiny-Platform
+cd /opt && git clone https://github.com/code-lun/tinyPlatform.git && cd tinyPlatform
+```
 
+#### 安装依赖
 # ---- 后端依赖 ----
-cd backend
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-cd ..
+```bash
+cd /opt/tinyPlatform/backend && \
+python3 -m venv venv && \
+./venv/bin/pip install --upgrade pip && \
+./venv/bin/pip install -r requirements.txt && \
+```
 
+```bash
 # ---- MCP 依赖 ----
-cd mcp
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-cd ..
+cd /opt/tinyPlatform/mcp && \
+python3 -m venv venv && \
+./venv/bin/pip install --upgrade pip && \
+./venv/bin/pip install -r requirements.txt
 ```
 
 ### 2. 配置环境变量
@@ -185,10 +180,10 @@ cd ..
 
 ```bash
 # 启动后端（端口 8000）
-cd backend && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+cd backend && source venv/bin/activate && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 &
 
 # 启动 MCP 服务（端口 8080，依赖后端已启动）
-cd mcp && python3 server.py &
+cd mcp && source venv/bin/activate && python3 server.py &
 ```
 
 ---
@@ -201,16 +196,15 @@ cd mcp && python3 server.py &
 
 **安装：**
 
-```bash
-# TODO: 填写 WebCurl 安装方式
-```
+去release选择下载最新版即可
+[release](https://github.com/o8oo8o/WebCurl/releases/tag/v4.0)
 
 **测试示例：**
 
 ```
 Token:      tinyPlatform-token-2024
 Header:     Authorization: Bearer tinyPlatform-token-2024
-后端地址:   http://127.0.0.1:8000
+后端地址(修改为自己实际的地址):   http://127.0.0.1:8000
 ```
 
 | 接口 | 方法 | 是否需要 Token |
@@ -240,7 +234,7 @@ curl -H "Authorization: Bearer tinyPlatform-token-2024" \
 [MCP Inspector](https://github.com/modelcontextprotocol/inspector) 是 MCP 官方可视化测试工具，可连接 MCP 服务、浏览工具列表、调用工具并查看结果。
 
 **安装（v1 版本）：**
-
+说明：该版本不能绑定0.0.0.0地址，所以只能安装在有图形化的环境，建议直接安装在测试mcp的环境
 直接执行，windows也是这个命令（cmd/powershell）
 ```bash
 npm install -g @modelcontextprotocol/inspector@1
@@ -287,12 +281,9 @@ Docker 部署：Claude Code ──(HTTP/MCP)──▶ mcp:8080 ──(HTTP)─�
 ---
 
 ## Docker 部署
-
-```bash
 # 构建服务
 backend&mcp路径下有Dockerfile，常规打包即可
 也可以直接在项目根目录执行以下命令
-
 ```bash
 docker build -t platform:v2.5 ./backend/ && docker build -t platform-mcp:v2.5 ./mcp/root@demo:/opt/Tiny-Platform
 ```
