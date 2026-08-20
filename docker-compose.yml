@@ -15,6 +15,7 @@ services:
       # 挂载日志目录（持久化日志文件）
       - ./logs:/logs
       - ./backend/.env:/etc/.env
+      - ./backend/app/registry/tools.yaml:/etc/tools.yaml
     environment:
       - API_TOKEN=${API_TOKEN:-tinyPlatform-token-2024}
       - SCRIPTS_DIR=/scripts
