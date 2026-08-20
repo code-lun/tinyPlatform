@@ -1,5 +1,5 @@
 """
-全局日志模块
+全局日志模块（并发安全版）
 提供统一的日志记录功能，支持多等级、彩色输出、时间戳、文件写入
 
 用法:
@@ -52,10 +52,11 @@ class Logger:
     - 日志文件按天自动轮转（文件名含日期）
     - 日志目录自动创建
     - 时间戳精确到秒
+    - 全链路并发安全（控制台输出原子化 + 文件操作全程持锁）
     """
 
     _instance = None
-    _lock = threading.Lock()
+    _init_lock = threading.Lock()
 
     # ANSI 终端颜色码
     _COLORS = {
@@ -81,27 +82,37 @@ class Logger:
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
+            with cls._init_lock:
+                if cls._instance is None:
+                    instance = super().__new__(cls)
+                    instance._initialized = False
+                    cls._instance = instance
         return cls._instance
 
     def __init__(self):
         if self._initialized:
             return
 
-        self._level = self._parse_level(os.getenv("LOG_LEVEL", "info"))
-        self._use_color = sys.stderr.isatty()
+        # 使用独立锁保护初始化过程，防止多线程重复初始化
+        with self._init_lock:
+            if self._initialized:
+                return
 
-        # ---- 文件日志初始化 ----
-        self._file_enabled = os.getenv("LOG_FILE_ENABLED", "false").lower() == "true"
-        self._log_dir: Path | None = None
-        self._current_date: str = ""
-        self._file_handle = None
+            self._level = self._parse_level(os.getenv("LOG_LEVEL", "info"))
+            self._use_color = sys.stderr.isatty()
 
-        if self._file_enabled:
-            self._init_file_logging()
+            # ---- 文件日志初始化 ----
+            self._file_enabled = os.getenv("LOG_FILE_ENABLED", "false").lower() == "true"
+            self._log_dir: Path | None = None
+            self._current_date: str = ""
+            self._file_handle = None
+            # 文件操作专用锁：保护 _file_handle / _current_date / _open_log_file 的全链路
+            self._file_lock = threading.Lock()
 
-        self._initialized = True
+            if self._file_enabled:
+                self._init_file_logging()
+
+            self._initialized = True
 
     # ========== 公共接口 ==========
 
@@ -142,9 +153,10 @@ class Logger:
     @property
     def log_file_path(self) -> str | None:
         """当前日志文件路径（未启用时返回 None）"""
-        if self._file_handle:
-            return self._file_handle.name
-        return None
+        with self._file_lock:
+            if self._file_handle:
+                return self._file_handle.name
+            return None
 
     # ========== 内部实现 ==========
 
@@ -178,7 +190,10 @@ class Logger:
             )
 
     def _open_log_file(self):
-        """打开当天日期的日志文件（如已打开且日期未变则跳过）"""
+        """
+        打开当天日期的日志文件（如已打开且日期未变则跳过）
+        ⚠️ 调用方必须已持有 self._file_lock
+        """
         today = datetime.now().strftime("%Y-%m-%d")
         if self._file_handle and today == self._current_date:
             return  # 同一天，复用当前文件句柄
@@ -190,7 +205,7 @@ class Logger:
             except OSError:
                 pass
 
-        # 打开新文件   日志前缀名位置"platform-"
+        # 打开新文件，日志前缀名位置 "platform-"
         log_path = self._log_dir / f"platform-{today}.log"
         try:
             self._file_handle = open(str(log_path), "a", encoding="utf-8")
@@ -205,32 +220,39 @@ class Logger:
             )
 
     def _log(self, level: LogLevel, tag: str, message: str):
-        """核心输出方法：同时写入 stderr 和日志文件"""
+        """核心输出方法：同时写入 stderr 和日志文件（并发安全）"""
         if level < self._level:
             return
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         level_name = level.name
 
-        # ---- stderr 控制台输出（带颜色） ----
+        # ---- stderr 控制台输出（原子写入，避免多线程行内交错） ----
         if self._use_color:
             color = self._COLORS.get(level, "")
             console_line = (
                 f"{color}[{timestamp}] [{level_name:<7s}] [{tag}] "
-                f"{message}{self._RESET}"
+                f"{message}{self._RESET}\n"
             )
         else:
-            console_line = f"[{timestamp}] [{level_name:<7s}] [{tag}] {message}"
+            console_line = f"[{timestamp}] [{level_name:<7s}] [{tag}] {message}\n"
 
-        print(console_line, file=sys.stderr, flush=True)
+        # 单次 write + flush 保证整条日志不被其他线程打断
+        try:
+            sys.stderr.write(console_line)
+            sys.stderr.flush()
+        except OSError:
+            pass  # stderr 不可写时静默降级
 
-        # ---- 文件输出（无颜色，线程安全） ----
-        if self._file_enabled and self._file_handle is not None:
-            file_line = f"[{timestamp}] [{level_name:<7s}] [{tag}] {message}"
-            with self._lock:
+        # ---- 文件输出（无颜色，全链路持锁） ----
+        if self._file_enabled:
+            file_line = f"[{timestamp}] [{level_name:<7s}] [{tag}] {message}\n"
+            with self._file_lock:
+                if not self._file_enabled or self._file_handle is None:
+                    return  # 可能在等待锁期间被其他线程降级
                 try:
-                    self._open_log_file()          # 跨天自动轮转
-                    self._file_handle.write(file_line + "\n")
+                    self._open_log_file()          # 跨天自动轮转（已在锁内）
+                    self._file_handle.write(file_line)
                     self._file_handle.flush()
                 except OSError:
                     # 写入失败时静默降级，不阻塞业务

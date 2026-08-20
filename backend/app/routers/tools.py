@@ -5,23 +5,28 @@
 import asyncio
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from app.models.tool_models import (
-    ToolInfo, ToolListResponse, ToolExecuteResponse,
+    ToolExecuteResponse,
+    ToolInfo,
+    ToolListResponse,
 )
-from app.utils.executor import ScriptExecutor
 from app.registry import tool_registry
 from app.utils.auth import verify_token
+from app.utils.executor import ConcurrentScriptExecutor
 from app.utils.logger import logger
 
 router = APIRouter(dependencies=[Depends(verify_token)])
 
-# 初始化脚本执行器（配置从环境变量读取，无需硬编码参数）
-executor = ScriptExecutor()
+
+# ========== 依赖注入 ==========
+def get_executor(request: Request) -> ConcurrentScriptExecutor:
+    """从 app.state 获取 executor 实例（由 lifespan 管理生命周期）"""
+    return request.app.state.executor
+
 
 # ========== API 端点 ==========
-
 
 @router.get("/tools", response_model=ToolListResponse, summary="获取工具列表")
 async def list_tools(
@@ -36,20 +41,17 @@ async def list_tools(
     """
     all_tools = tool_registry.get_all()
 
-    tool_list = []
-    for tool in all_tools:
-        if category and tool["category"] != category:
-            continue
-
-        tool_list.append(
-            ToolInfo(
-                name=tool["name"],
-                description=tool["description"],
-                category=tool["category"],
-                params=tool["params"],
-                endpoint=tool["endpoint"],
-            )
+    tool_list = [
+        ToolInfo(
+            name=tool["name"],
+            description=tool["description"],
+            category=tool["category"],
+            params=tool["params"],
+            endpoint=tool["endpoint"],
         )
+        for tool in all_tools
+        if not category or tool["category"] == category
+    ]
 
     logger.info("API", f"工具列表查询 category={category or '全部'} total={len(tool_list)}")
     return ToolListResponse(
@@ -63,7 +65,10 @@ async def list_tools(
     response_model=ToolExecuteResponse,
     summary="GET 执行工具",
 )
-async def execute_tool_get(tool_name: str):
+async def execute_tool_get(
+    tool_name: str,
+    executor: ConcurrentScriptExecutor = Depends(get_executor),
+):
     """
     通过 GET 请求执行指定工具（无需参数的工具）
 
@@ -71,7 +76,7 @@ async def execute_tool_get(tool_name: str):
 
     执行对应的 Shell 脚本并返回 JSON 格式结果
     """
-    return await _execute_tool(tool_name, {})
+    return await _execute_tool(tool_name, {}, executor)
 
 
 @router.post(
@@ -79,7 +84,11 @@ async def execute_tool_get(tool_name: str):
     response_model=ToolExecuteResponse,
     summary="POST 执行工具",
 )
-async def execute_tool_post(tool_name: str, params: dict = None):
+async def execute_tool_post(
+    tool_name: str,
+    params: Optional[dict] = Body(None, description="工具执行参数"),
+    executor: ConcurrentScriptExecutor = Depends(get_executor),
+):
     """
     通过 POST 请求执行指定工具（支持传参）
 
@@ -88,13 +97,16 @@ async def execute_tool_post(tool_name: str, params: dict = None):
 
     执行对应的 Shell 脚本并返回 JSON 格式结果
     """
-    return await _execute_tool(tool_name, params or {})
+    return await _execute_tool(tool_name, params or {}, executor)
 
 
 # ========== 内部执行逻辑 ==========
 
-
-async def _execute_tool(tool_name: str, params: dict) -> ToolExecuteResponse:
+async def _execute_tool(
+    tool_name: str,
+    params: dict,
+    executor: ConcurrentScriptExecutor,
+) -> ToolExecuteResponse:
     """
     统一的工具执行内部函数
 
