@@ -126,7 +126,20 @@ mcp-inspector
 
 连接地址填写：`http://localhost:8080/mcp/`
 
-可在界面中浏览工具列表、填写参数、查看返回结果，是调试 MCP 的首选工具。
+可在界面中浏览工具列表、填写参数、查看返回结果，是
+
+### 4.3 功能截图
+#### cli获取工具清单
+![alt text](image.png)
+
+#### mcp api调用测试成功（cc调用）stdio模式
+![alt text](image-1.png)
+
+#### mcp调用测试（使用inspector1.0）
+![alt text](image-2.png)
+
+#### 调用日志
+![alt text](image-3.png)
 
 ---
 
