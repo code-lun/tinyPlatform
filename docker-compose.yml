@@ -5,7 +5,7 @@
 services:
   # ---- 后端 API 服务 ----
   backend:
-    image: platform:v2
+    image: platform:v2.6
     container_name: tinyPlatform-backend
     ports:
       - "8000:8000"
@@ -34,7 +34,7 @@ services:
 
   # ---- MCP 服务（Streamable HTTP 模式） ----
   mcp:
-    image: platform-mcp:v2
+    image: platform-mcp:v2.6
     container_name: tinyPlatform-mcp
     ports:
       - "8080:8080"
