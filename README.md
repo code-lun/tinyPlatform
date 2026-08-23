@@ -130,16 +130,16 @@ mcp-inspector
 
 ### 4.3 功能截图
 #### cli获取工具清单
-![alt text](image.png)
+![alt text](png/image.png)
 
 #### mcp api调用测试成功（cc调用）stdio模式
-![alt text](image-1.png)
+![alt text](png/image-1.png)
 
 #### mcp调用测试（使用inspector1.0）
-![alt text](image-2.png)
+![alt text](png/image-2.png)
 
 #### 调用日志
-![alt text](image-3.png)
+![alt text](png/image-3.png)
 
 ---
 
