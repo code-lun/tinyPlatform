@@ -73,6 +73,12 @@ python3 -m venv venv && ./venv/bin/pip install --upgrade pip
 | `LOG_LEVEL` | `info` | 日志级别（debug/info/warning/error） |
 
 > ⚠️ **注意**：MCP 默认使用 stdio 模式，如需 HTTP 模式请在 `mcp/.env` 中调整传输配置。
+#### 环境变量优先级说明
+优先级（由高到低）：
+    1. Shell 环境变量（export / docker-compose environment）
+    2. backend/.env 文件
+    3. 本文件中的默认值
+敏感环境变量，一律使用env的方式，其他方式会被提交到仓库，可能造成泄露
 
 ### 3.3 启动服务
 
@@ -231,3 +237,6 @@ HOST="${TOOL_PARAM_HOST:-localhost}"
     ```
 
 > ✅ 注册后即可通过 `/api/tools/{name}` 调用，MCP 端也会自动发现新工具，无需额外配置。
+
+## 9.PR
+可以提PR到develop分支，我审核后，没有问题就会通过
