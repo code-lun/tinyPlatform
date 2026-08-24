@@ -17,9 +17,15 @@ services:
       - ./backend/.env:/etc/.env
       - ./backend/app/registry/tools.yaml:/etc/tools.yaml
     environment:
-      - API_TOKEN=${API_TOKEN:-tinyPlatform-token-2024}
+      # token禁止放在yml，放在env里面，挂载形式是用
+      # - API_TOKEN=${API_TOKEN:-tinyPlatform-token-2024}
       - SCRIPTS_DIR=/scripts
       - SCRIPT_TIMEOUT=30
+      - EXECUTOR_MAX_WORKERS=${EXECUTOR_MAX_WORKERS:-}
+      - EXECUTOR_QUEUE_SIZE=${EXECUTOR_QUEUE_SIZE:-}
+      - EXECUTOR_QUEUE_WAIT_TIMEOUT=${EXECUTOR_QUEUE_WAIT_TIMEOUT:-}
+      - EXECUTOR_MAX_CONCURRENT_SCRIPTS=${EXECUTOR_MAX_CONCURRENT_SCRIPTS:-}
+      - EXECUTOR_RESULT_TTL=${EXECUTOR_RESULT_TTL:-}
       - PORT=8000
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - LOG_DIR=/logs
@@ -44,7 +50,8 @@ services:
       - ./mcp/.env:/etc/.env
     environment:
       - BACKEND_API_URL=http://backend:8000
-      - API_TOKEN=${API_TOKEN:-tinyPlatform-token-2024}
+      # token禁止放在yml，放在env里面，挂载形式是用
+      # - API_TOKEN=${API_TOKEN:-tinyPlatform-token-2024}
       - MCP_TRANSPORT=http
       - MCP_HTTP_PORT=8080
       - REQUEST_TIMEOUT=30
