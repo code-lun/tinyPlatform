@@ -25,3 +25,6 @@ build/
 
 # python venv
 venv/
+
+# demo
+demo*
