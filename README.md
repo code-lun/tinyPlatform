@@ -66,12 +66,12 @@ python3 -m venv venv && ./venv/bin/pip install --upgrade pip
 
 后端和 MCP 各自有 `.env` 文件，默认值可直接使用。关键项：
 
-| 变量 | 默认值 | 说明 |
-| :--- | :--- | :--- |
-| `API_TOKEN` | `tinyPlatform-token-2024` | Bearer Token，生产环境务必修改 |
-| `SCRIPTS_DIR` | `../scripts` | 脚本目录相对路径 |
-| `LOG_LEVEL` | `info` | 日志级别（debug/info/warning/error） |
-
+| 变量                     | 默认值                       | 说明                             |
+| :--------------------- | :------------------------ | :----------------------------- |
+| `API_TOKEN`            | `tinyPlatform-token-2024` | Bearer Token，生产环境务必修改          |
+| `SCRIPTS_DIR`          | `../scripts`              | 脚本目录相对路径                       |
+| `LOG_LEVEL`            | `info`                    | 日志级别（debug/info/warning/error） |
+| `EXECUTOR_MAX_WORKERS` | `cpu_count + 4`           | 线程池大小（两核则为2+4）                 |
 > ⚠️ **注意**：MCP 默认使用 stdio 模式，如需 HTTP 模式请在 `mcp/.env` 中调整传输配置。
 #### 环境变量优先级说明
 优先级（由高到低）：
