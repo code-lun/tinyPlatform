@@ -50,19 +50,20 @@ class ExecutorConfig:
     """
     max_workers: int = 4
     queue_size: int = 50
-    default_timeout: int = 60
+    default_timeout: int = 30
+    queue_wait_timeout: int = 5
     max_concurrent_scripts: Optional[int] = None
     result_ttl: int = 300
 
     @classmethod
     def for_2core(cls) -> "ExecutorConfig":
         """2核 Pod 推荐配置"""
-        return cls(max_workers=4, queue_size=50, default_timeout=60)
+        return cls(max_workers=4, queue_size=50)
 
     @classmethod
     def for_4core(cls) -> "ExecutorConfig":
         """4核 Pod 推荐配置"""
-        return cls(max_workers=8, queue_size=100, default_timeout=60)
+        return cls(max_workers=8, queue_size=100)
 
 
 # ==================== 自定义异常 ====================
@@ -117,6 +118,10 @@ class ConcurrentScriptExecutor:
         self._results: Dict[str, TaskResult] = {}
         self._tasks_lock = threading.Lock()
 
+        # ---- 活跃任务计数（当前正在执行的脚本数，覆盖同步/异步两条路径）----
+        self._active_count = 0
+        self._active_count_lock = threading.Lock()
+
         # ---- 清理线程停止标志 ----
         self._stop_event = threading.Event()
 
@@ -152,7 +157,7 @@ class ConcurrentScriptExecutor:
         同步执行（阻塞等待结果），与原始 ScriptExecutor.execute() 接口兼容。
         内部通过线程池执行，具有并发控制和队列管理。
         """
-        if not self._semaphore.acquire(timeout=5):
+        if not self._semaphore.acquire(timeout=self.config.queue_wait_timeout):
             return self._executor._error_response(
                 code=429,
                 message="系统繁忙：任务队列已满，请稍后重试",
@@ -256,15 +261,17 @@ class ConcurrentScriptExecutor:
     ) -> Dict[str, Any]:
         """带每脚本并发限制的同步执行"""
         sem = self._get_script_semaphore(script_name)
-        if sem is not None and not sem.acquire(timeout=5):
+        if sem is not None and not sem.acquire(timeout=self.config.queue_wait_timeout):
             return self._executor._error_response(
                 code=429,
                 message=f"脚本 {script_name} 并发数已达上限",
                 elapsed=0,
             )
         try:
+            self._track_active(1)
             return self._executor.execute(script_name, params, timeout)
         finally:
+            self._track_active(-1)
             if sem is not None:
                 sem.release()
 
@@ -281,7 +288,7 @@ class ConcurrentScriptExecutor:
             self._results[task_id].started_at = time.time()
 
         sem = self._get_script_semaphore(script_name)
-        acquired = sem is not None and sem.acquire(timeout=5)
+        acquired = sem is not None and sem.acquire(timeout=self.config.queue_wait_timeout)
 
         try:
             if sem is not None and not acquired:
@@ -292,7 +299,11 @@ class ConcurrentScriptExecutor:
                 )
                 status = TaskStatus.ERROR
             else:
-                result = self._executor.execute(script_name, params, timeout)
+                self._track_active(1)
+                try:
+                    result = self._executor.execute(script_name, params, timeout)
+                finally:
+                    self._track_active(-1)
                 status = (
                     TaskStatus.SUCCESS
                     if result.get("status") == "success"
@@ -310,6 +321,11 @@ class ConcurrentScriptExecutor:
             self._semaphore.release()
 
     # ==================== 工具方法 ====================
+
+    def _track_active(self, delta: int):
+        """增减活跃任务计数（线程安全）"""
+        with self._active_count_lock:
+            self._active_count += delta
 
     def _get_script_semaphore(
         self, script_name: str
@@ -350,34 +366,21 @@ class ConcurrentScriptExecutor:
     # ==================== 状态查询 ====================
 
     def get_stats(self) -> Dict[str, Any]:
-        """获取执行器运行状态"""
-        with self._tasks_lock:
-            pending = sum(
-                1 for r in self._results.values()
-                if r.status == TaskStatus.PENDING
-            )
-            running = sum(
-                1 for r in self._results.values()
-                if r.status == TaskStatus.RUNNING
-            )
-            completed = sum(
-                1 for r in self._results.values()
-                if r.status in (TaskStatus.SUCCESS, TaskStatus.ERROR)
-            )
+        """获取执行器运行状态（覆盖同步/异步两条执行路径）"""
+        with self._active_count_lock:
+            active_tasks = self._active_count
 
-        # 安全访问工作队列大小（不同 Python 版本内部实现可能不同）
+        # 安全访问工作队列深度（排队等待 worker 的任务数，不同 Python 版本内部实现可能不同）
         try:
-            queue_size = self._pool._work_queue.qsize()
+            queued_tasks = self._pool._work_queue.qsize()
         except AttributeError:
-            queue_size = -1  # 不可用时标记为 -1
+            queued_tasks = -1  # 不可用时标记为 -1
 
         return {
             "max_workers": self.config.max_workers,
-            "queue_size": self.config.queue_size,
-            "active_threads": queue_size,
-            "pending_tasks": pending,
-            "running_tasks": running,
-            "completed_tasks": completed,
+            "queue_capacity": self.config.queue_size,
+            "active_tasks": active_tasks,
+            "queued_tasks": queued_tasks,
         }
 
     # ==================== 生命周期 ====================

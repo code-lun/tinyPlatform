@@ -29,18 +29,6 @@ tools:
       - 监控
       - 巡检
 
-  - name: reload_tools
-    display_name: 重载工具注册表
-    description: 重新加载工具注册表，使新添加或修改的工具定义生效（无需重启服务）
-    script: reload_tools.py
-    category: 系统管理
-    params: []
-    timeout: 30          # 重载操作可能涉及文件扫描，预留充足时间
-    enabled: true
-    tags:
-      - 系统
-      - 管理
-
   - name: sleep_test
     display_name: 睡眠测试
     description: 执行系统睡眠，用于测试任务挂起、超时控制或后台调度，默认睡眠 5 分钟（300 秒）

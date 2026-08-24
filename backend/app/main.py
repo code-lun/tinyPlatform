@@ -14,9 +14,19 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.core.config import PORT, LOG_LEVEL, ALLOWED_ORIGINS
-from app.routers import tools
-from app.utils.executor import ConcurrentScriptExecutor
+from app.core.config import (
+    PORT,
+    LOG_LEVEL,
+    ALLOWED_ORIGINS,
+    SCRIPT_TIMEOUT,
+    EXECUTOR_MAX_WORKERS,
+    EXECUTOR_QUEUE_SIZE,
+    EXECUTOR_QUEUE_WAIT_TIMEOUT,
+    EXECUTOR_MAX_CONCURRENT_SCRIPTS,
+    EXECUTOR_RESULT_TTL,
+)
+from app.routers import executor, tools
+from app.utils.executor import ConcurrentScriptExecutor, ExecutorConfig
 from app.utils.logger import logger
 
 
@@ -25,7 +35,23 @@ from app.utils.logger import logger
 async def lifespan(app: FastAPI):
     """应用生命周期：启动 → 运行 → 优雅关闭"""
     # ---- 启动阶段 ----
-    executor = ConcurrentScriptExecutor()
+    # 从统一配置模块构建执行器配置（config.py 是环境变量的唯一入口）
+    # 注意：config 中 EXECUTOR_MAX_CONCURRENT_SCRIPTS=0 表示不限制，
+    #       而 ExecutorConfig 用 None 表示不限制，此处做语义转换
+    executor = ConcurrentScriptExecutor(
+        config=ExecutorConfig(
+            max_workers=EXECUTOR_MAX_WORKERS,
+            queue_size=EXECUTOR_QUEUE_SIZE,
+            default_timeout=SCRIPT_TIMEOUT,
+            queue_wait_timeout=EXECUTOR_QUEUE_WAIT_TIMEOUT,
+            max_concurrent_scripts=(
+                EXECUTOR_MAX_CONCURRENT_SCRIPTS
+                if EXECUTOR_MAX_CONCURRENT_SCRIPTS > 0
+                else None
+            ),
+            result_ttl=EXECUTOR_RESULT_TTL,
+        ),
+    )
     app.state.executor = executor
     logger.info("SERVER", f"服务启动于 http://0.0.0.0:{PORT}")
 
@@ -57,6 +83,7 @@ app.add_middleware(
 
 # 注册路由
 app.include_router(tools.router, prefix="/api", tags=["工具管理"])
+app.include_router(executor.router, prefix="/api", tags=["执行器"])
 
 
 # ========== 健康检查端点 ==========

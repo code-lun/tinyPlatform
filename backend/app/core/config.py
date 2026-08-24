@@ -42,6 +42,17 @@ def _resolve_scripts_dir(raw: str) -> Path:
     return (BACKEND_DIR / p).resolve()
 
 
+def _int_env(key: str, default: int) -> int:
+    """安全读取整型环境变量，非法值或空值回退默认"""
+    raw = os.getenv(key, "")
+    if raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 # ============================================================
 # 服务配置
 # ============================================================
@@ -64,6 +75,31 @@ API_TOKEN = os.getenv("API_TOKEN", "tinyPlatform-token-2024")
 
 SCRIPTS_DIR = _resolve_scripts_dir(os.getenv("SCRIPTS_DIR", "../scripts"))
 SCRIPT_TIMEOUT = int(os.getenv("SCRIPT_TIMEOUT", "30"))
+
+# ============================================================
+# 并发执行器配置
+# ============================================================
+
+# 线程池大小，默认使用 Python 3.8+ ThreadPoolExecutor 官方公式：
+# min(32, cpu_count + 4)，适合 I/O 密集型任务且避免高核机器线程过多
+EXECUTOR_MAX_WORKERS: int = _int_env(
+    "EXECUTOR_MAX_WORKERS",
+    min(32, (os.cpu_count() or 1) + 4),
+)
+
+# 等待队列容量（背压控制）
+EXECUTOR_QUEUE_SIZE: int = _int_env("EXECUTOR_QUEUE_SIZE", 50)
+
+# 脚本默认执行超时复用 SCRIPT_TIMEOUT（见上方「脚本执行」段），不再单独配置
+
+# 队列/信号量等待超时（秒），获取不到槽位时多久后返回 429
+EXECUTOR_QUEUE_WAIT_TIMEOUT: int = _int_env("EXECUTOR_QUEUE_WAIT_TIMEOUT", 5)
+
+# 每脚本最大并发数，0 表示不限制
+EXECUTOR_MAX_CONCURRENT_SCRIPTS: int = _int_env("EXECUTOR_MAX_CONCURRENT_SCRIPTS", 0)
+
+# 异步任务结果保留时间（秒），超过后由后台清理线程回收
+EXECUTOR_RESULT_TTL: int = _int_env("EXECUTOR_RESULT_TTL", 300)
 
 # ============================================================
 # 日志
