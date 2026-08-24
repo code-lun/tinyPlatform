@@ -30,9 +30,6 @@ eggs/
 *.md
 !requirements.txt
 
-# 前端（未实现）
-frontend/
-
 # 临时文件
 *.log
 *.tmp

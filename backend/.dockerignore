@@ -1,0 +1,41 @@
+# ===== 敏感配置 =====
+.env                # 真实密钥，打死也不能进镜像
+.env.example        # 虽然没密钥，但镜像里不需要模板，精简体积
+*.local             # 本地覆盖配置（如有）
+
+# ===== Python 缓存与编译产物 =====
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so                 # C扩展编译产物（一般不需要）
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ===== 备份与临时文件 =====
+*.bak
+*.tmp
+*.swp
+*.swo
+*~
+.DS_Store           # macOS 目录文件
+
+# ===== 版本控制 =====
+.git/
+.gitignore
+.gitattributes
+
+# ===== IDE 与编辑器 =====
+.vscode/
+.idea/
+*.iml
+.code-workspace
+
+# ===== 测试与开发辅助文件 =====
+demo.py             
+pytest_cache/
+.coverage
+htmlcov/
