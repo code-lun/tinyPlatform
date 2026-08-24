@@ -5,14 +5,15 @@
 
 FROM python:3.11-alpine3.21
 
-WORKDIR /app
+WORKDIR /mcp
 
 # 安装依赖（利用层缓存）
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 复制 MCP 服务代码
-COPY server.py .
+COPY / .
+
 
 EXPOSE 8080
 
