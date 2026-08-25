@@ -147,6 +147,9 @@ mcp-inspector
 #### 调用日志
 ![alt text](png/image-3.png)
 
+#### 线程池大小&状态查看
+![alt text](png/image-4.png)
+![alt text](png/image-5.png)
 ---
 
 ## 5. 架构与调用链路
